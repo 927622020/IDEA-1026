@@ -206,8 +206,8 @@ All application endpoints use the `/api/v1` prefix.
 
 | Method | Endpoint |
 |---|---|
-| GET | `/health/live` |
-| GET | `/health/ready` |
+| GET | `/api/v1/health/live` |
+| GET | `/api/v1/health/ready` |
 
 ### Products and Locations
 

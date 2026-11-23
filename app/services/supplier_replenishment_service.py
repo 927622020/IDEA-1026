@@ -135,6 +135,7 @@ def recommend_supplier_replenishment(
         requires_replenishment=required_quantity > 0,
         recommended_quantity=recommended_quantity,
         supplier_id=supplier.id,
+        supplier_product_id=supplier_product.id,
         supplier_name=supplier.supplier_name,
         supplier_code=supplier.supplier_code,
         supplier_sku=supplier_product.supplier_sku,

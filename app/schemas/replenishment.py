@@ -37,6 +37,7 @@ class SupplierReplenishmentResponse(BaseModel):
     recommended_quantity: Decimal
 
     supplier_id: UUID
+    supplier_product_id: UUID
     supplier_name: str
     supplier_code: str
     supplier_sku: str | None

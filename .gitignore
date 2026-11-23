@@ -1,0 +1,28 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.py[cod]
+dist/
+build/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated ML artifacts
+artifacts/
+
+# Temporary backup files
+*.save
+
+# Environment-specific secrets
+.env.*
+!.env.example

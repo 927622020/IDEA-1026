@@ -1,5 +1,6 @@
 from datetime import datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -9,6 +10,7 @@ class LocationCreate(BaseModel):
     location_name: str = Field(min_length=1, max_length=160)
     location_type: str = Field(min_length=1, max_length=30)
     address: str | None = Field(default=None, max_length=500)
+    timezone: str = Field(default="UTC", max_length=64)
 
     @field_validator("location_code", "location_name", "location_type")
     @classmethod
@@ -16,6 +18,16 @@ class LocationCreate(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("Field cannot be blank")
+        return value
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        value = value.strip()
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("Invalid timezone name") from exc
         return value
 
     @field_validator("address")
@@ -33,6 +45,7 @@ class LocationRead(BaseModel):
     location_name: str
     location_type: str
     address: str | None
+    timezone: str
     is_active: bool
     created_at: datetime
 

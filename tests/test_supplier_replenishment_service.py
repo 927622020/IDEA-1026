@@ -1,4 +1,4 @@
-
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -251,3 +251,120 @@ def test_missing_inventory_balance_returns_404(db):
         )
 
     assert error.value.status_code == 404
+
+
+def test_forecast_recommendation_uses_supplier_lead_time(
+    db, monkeypatch
+):
+    from datetime import date, timedelta
+
+    from app.schemas.forecast import (
+        DailyForecast,
+        DemandForecastResponse,
+    )
+    from app.services.supplier_replenishment_service import (
+        recommend_forecast_supplier_replenishment,
+    )
+
+    tenant, product, location, _ = make_context(db)
+
+    supplier = make_supplier(
+        db, tenant, "SUP-FORECAST", "Forecast Supplier", 3
+    )
+    add_supplier_product(
+        db, tenant, supplier, product,
+        preferred=True,
+        lead_time=3,
+    )
+
+    start = date(2026, 11, 25)
+    daily_values = [40, 50, 60, 100, 100, 100, 100]
+
+    fake_forecast = DemandForecastResponse(
+        tenant_id=tenant.id,
+        location_id=location.id,
+        product_id=product.id,
+        historical_start_date=start - timedelta(days=29),
+        historical_end_date=start - timedelta(days=2),
+        forecast_start_date=start,
+        forecast_end_date=start + timedelta(days=6),
+        history_days=28,
+        days_with_sales=28,
+        method="weekday_average",
+        status="ok",
+        message="Test forecast",
+        daily_forecasts=[
+            DailyForecast(
+                date=start + timedelta(days=index),
+                forecast_demand=Decimal(value),
+            )
+            for index, value in enumerate(daily_values)
+        ],
+        total_forecast_demand=Decimal(550),
+    )
+
+    monkeypatch.setattr(
+        "app.services.forecast_service.forecast_daily_demand",
+        lambda *args, **kwargs: fake_forecast,
+    )
+
+    result = recommend_forecast_supplier_replenishment(
+        db,
+        tenant.id,
+        location_id=location.id,
+        product_id=product.id,
+        safety_stock=Decimal(8),
+    )
+
+    # Only the first 3 forecast days are used: 40 + 50 + 60 = 150.
+    # Required = 150 + 8 safety - 80 available - 10 inbound = 68.
+    # MOQ 10 and pack size 5 produce an order quantity of 70.
+    assert result.forecast_demand == Decimal(150)
+    assert result.lead_time_forecast_days == 3
+    assert len(result.lead_time_daily_forecasts) == 3
+    assert result.recommended_quantity == Decimal(70)
+    assert result.forecast_method == "weekday_average"
+
+
+def test_forecast_recommendation_rejects_insufficient_history(
+    db, monkeypatch
+):
+    from app.schemas.forecast import DemandForecastResponse
+    from app.services.supplier_replenishment_service import (
+        recommend_forecast_supplier_replenishment,
+    )
+
+    tenant, product, location, _ = make_context(db)
+
+    fake_forecast = DemandForecastResponse(
+        tenant_id=tenant.id,
+        location_id=location.id,
+        product_id=product.id,
+        historical_start_date=date(2026, 10, 27),
+        historical_end_date=date(2026, 11, 23),
+        forecast_start_date=date(2026, 11, 25),
+        forecast_end_date=date(2026, 12, 1),
+        history_days=28,
+        days_with_sales=0,
+        method="none",
+        status="insufficient_history",
+        message="No history",
+        daily_forecasts=[],
+        total_forecast_demand=Decimal(0),
+    )
+
+    monkeypatch.setattr(
+        "app.services.forecast_service.forecast_daily_demand",
+        lambda *args, **kwargs: fake_forecast,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        recommend_forecast_supplier_replenishment(
+            db,
+            tenant.id,
+            location_id=location.id,
+            product_id=product.id,
+            safety_stock=Decimal(8),
+        )
+
+    assert error.value.status_code == 422

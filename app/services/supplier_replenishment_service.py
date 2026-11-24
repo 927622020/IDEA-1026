@@ -16,6 +16,7 @@ from app.models import (
     SupplierProduct,
 )
 from app.schemas.replenishment import (
+    ForecastSupplierReplenishmentResponse,
     SupplierReplenishmentRequest,
     SupplierReplenishmentResponse,
 )
@@ -146,4 +147,81 @@ def recommend_supplier_replenishment(
         minimum_order_quantity=supplier_product.minimum_order_quantity,
         pack_size=supplier_product.pack_size,
         is_preferred_supplier=supplier_product.is_preferred,
+    )
+
+
+def recommend_forecast_supplier_replenishment(
+    db: Session,
+    tenant_id: UUID,
+    *,
+    location_id: UUID,
+    product_id: UUID,
+    safety_stock: Decimal,
+):
+    """Recommend replenishment using forecast demand over supplier lead time."""
+
+    from app.services.forecast_service import forecast_daily_demand
+
+    forecast = forecast_daily_demand(
+        db,
+        tenant_id,
+        location_id=location_id,
+        product_id=product_id,
+    )
+
+    if forecast.status == "insufficient_history":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Insufficient sales history for a forecast-based recommendation.",
+        )
+
+    # Identify the supplier before calculating lead-time demand.
+    selection_payload = SupplierReplenishmentRequest(
+        location_id=location_id,
+        product_id=product_id,
+        forecast_demand=Decimal(0),
+        safety_stock=safety_stock,
+    )
+
+    supplier_selection = recommend_supplier_replenishment(
+        db,
+        tenant_id,
+        selection_payload,
+    )
+
+    lead_time = supplier_selection.lead_time_days
+
+    if lead_time < 1 or lead_time > len(forecast.daily_forecasts):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Supplier lead time is {lead_time} days, but the forecast "
+                f"supports only {len(forecast.daily_forecasts)} days."
+            ),
+        )
+
+    lead_time_forecasts = forecast.daily_forecasts[:lead_time]
+
+    lead_time_demand = sum(
+        (item.forecast_demand for item in lead_time_forecasts),
+        Decimal(0),
+    )
+
+    final_payload = selection_payload.model_copy(
+        update={"forecast_demand": lead_time_demand}
+    )
+
+    recommendation = recommend_supplier_replenishment(
+        db,
+        tenant_id,
+        final_payload,
+    )
+
+    return ForecastSupplierReplenishmentResponse(
+        **recommendation.model_dump(),
+        forecast_method=forecast.method,
+        forecast_start_date=lead_time_forecasts[0].date,
+        forecast_end_date=lead_time_forecasts[-1].date,
+        lead_time_forecast_days=lead_time,
+        lead_time_daily_forecasts=lead_time_forecasts,
     )

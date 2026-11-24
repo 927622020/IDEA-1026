@@ -3,6 +3,17 @@ import { useEffect, useState } from 'react'
 import './App.css'
 
 const TENANT_ID = '1bb3a9f9-1b23-4f0a-8583-bf32a89490b9'
+const CHENNAI_LOCATION_ID = '74920a2c-8934-42dc-b7c0-71c3e37cf114'
+
+function formatCurrency(amount: string | number, currency: string): string {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(amount))
+}
+
 
 interface Product {
   id: string
@@ -66,6 +77,14 @@ interface SupplierRecommendation {
   minimum_order_quantity: string
   pack_size: string
   is_preferred_supplier: boolean
+  forecast_method?: 'weekday_average' | 'overall_daily_average'
+  forecast_start_date?: string
+  forecast_end_date?: string
+  lead_time_forecast_days?: number
+  lead_time_daily_forecasts?: {
+    date: string
+    forecast_demand: string
+  }[]
 }
 
 
@@ -141,8 +160,11 @@ function App() {
         setProducts(productData.items ?? [])
         setInventory(inventoryData.items ?? [])
 
-        if (inventoryData.items?.length) {
-          setAvailableStock(String(inventoryData.items[0].available))
+        const preferredItem = inventoryData.items?.find(
+          (item) => item.location_id === CHENNAI_LOCATION_ID,
+        ) ?? inventoryData.items?.[0]
+        if (preferredItem) {
+          setAvailableStock(String(preferredItem.available))
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Something went wrong.')
@@ -190,10 +212,14 @@ function App() {
   const getProduct = (productId: string) =>
     products.find((product) => product.id === productId)
 
+  const selectedInventory = inventory.find(
+    (item) => item.location_id === CHENNAI_LOCATION_ID,
+  ) ?? inventory[0]
+
   async function runPrediction(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    const item = inventory[0]
+    const item = selectedInventory
 
     if (!item) {
       setPredictionError('No inventory record is available for prediction.')
@@ -255,7 +281,7 @@ function App() {
   async function runSupplierRecommendation(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    const item = inventory[0]
+    const item = selectedInventory
 
     if (!item) {
       setReplenishmentError('No inventory record is available.')
@@ -290,6 +316,57 @@ function App() {
     } catch (err) {
       setReplenishmentError(
         err instanceof Error ? err.message : 'Supplier recommendation failed.',
+      )
+    } finally {
+      setRecommending(false)
+    }
+  }
+
+  async function runAutomaticForecastRecommendation() {
+    const item = selectedInventory
+
+    if (!item) {
+      setReplenishmentError('No inventory record is available.')
+      return
+    }
+
+    setRecommending(true)
+    setReplenishmentError('')
+    setSupplierRecommendation(null)
+
+    try {
+      const response = await fetch(
+        '/api/v1/replenishment/forecast-supplier-recommendation',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Tenant-ID': TENANT_ID,
+          },
+          body: JSON.stringify({
+            location_id: item.location_id,
+            product_id: item.product_id,
+            safety_stock: Number(safetyStock),
+          }),
+        },
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null)
+        throw new Error(
+          errorData?.detail
+            ? JSON.stringify(errorData.detail)
+            : `Forecast recommendation failed (${response.status})`,
+        )
+      }
+
+      const result: SupplierRecommendation = await response.json()
+      setSupplierRecommendation(result)
+    } catch (err) {
+      setReplenishmentError(
+        err instanceof Error
+          ? err.message
+          : 'Forecast recommendation failed.',
       )
     } finally {
       setRecommending(false)
@@ -408,8 +485,11 @@ function App() {
       if (inventoryResponse.ok) {
         const inventoryData: InventoryPage = await inventoryResponse.json()
         setInventory(inventoryData.items ?? [])
-        if (inventoryData.items?.length) {
-          setAvailableStock(String(inventoryData.items[0].available))
+        const preferredItem = inventoryData.items?.find(
+          (item) => item.location_id === CHENNAI_LOCATION_ID,
+        ) ?? inventoryData.items?.[0]
+        if (preferredItem) {
+          setAvailableStock(String(preferredItem.available))
         }
       }
     } catch (err) {
@@ -581,11 +661,11 @@ function App() {
                 <div className="selected-product">
                   <span>Selected inventory product</span>
                   <strong>
-                    {getProduct(inventory[0]?.product_id ?? '')?.product_name
+                    {getProduct(selectedInventory?.product_id ?? '')?.product_name
                       ?? 'No inventory product'}
                   </strong>
                   <small>
-                    SKU: {getProduct(inventory[0]?.product_id ?? '')?.sku_code ?? '—'}
+                    SKU: {getProduct(selectedInventory?.product_id ?? '')?.sku_code ?? '—'}
                   </small>
                 </div>
 
@@ -695,7 +775,7 @@ function App() {
                   <div className="selected-product">
                     <span>Selected product</span>
                     <strong>
-                      {getProduct(inventory[0]?.product_id ?? '')?.product_name
+                      {getProduct(selectedInventory?.product_id ?? '')?.product_name
                         ?? 'No inventory product'}
                     </strong>
                   </div>
@@ -735,6 +815,17 @@ function App() {
                   >
                     {recommending ? 'Calculating...' : 'Get Supplier Recommendation'}
                   </button>
+
+                  <button
+                    type="button"
+                    className="predict-button"
+                    onClick={runAutomaticForecastRecommendation}
+                    disabled={recommending || inventory.length === 0}
+                  >
+                    {recommending
+                      ? 'Calculating...'
+                      : 'Generate Forecast-Based Recommendation'}
+                  </button>
                 </form>
 
                 {replenishmentError && (
@@ -751,16 +842,36 @@ function App() {
                     <div className="probability-result">
                       <span>Estimated total cost</span>
                       <strong>
-                        {supplierRecommendation.currency} {supplierRecommendation.estimated_total_cost}
+                        {formatCurrency(supplierRecommendation.estimated_total_cost, supplierRecommendation.currency)}
                       </strong>
                     </div>
                     <p>Supplier: {supplierRecommendation.supplier_name}</p>
                     <p>Supplier SKU: {supplierRecommendation.supplier_sku ?? '—'}</p>
-                    <p>Unit cost: {supplierRecommendation.currency} {supplierRecommendation.unit_cost}</p>
+                    <p>Unit cost: {formatCurrency(supplierRecommendation.unit_cost, supplierRecommendation.currency)}</p>
                     <p>Required quantity: {supplierRecommendation.required_quantity}</p>
                     <p>Available inventory: {supplierRecommendation.available_inventory}</p>
                     <p>Confirmed inbound: {supplierRecommendation.confirmed_inbound}</p>
                     <p>Lead time: {supplierRecommendation.lead_time_days} days</p>
+                    {supplierRecommendation.forecast_method && (
+                      <>
+                        <p>
+                          Forecast method: {supplierRecommendation.forecast_method}
+                        </p>
+                        <p>
+                          Forecast window: {supplierRecommendation.forecast_start_date}
+                          {' to '}
+                          {supplierRecommendation.forecast_end_date}
+                        </p>
+                        <p>
+                          Lead-time forecast: {supplierRecommendation.lead_time_forecast_days} days
+                        </p>
+                        {supplierRecommendation.lead_time_daily_forecasts?.map((day) => (
+                          <p key={day.date}>
+                            {day.date}: {day.forecast_demand} units forecast
+                          </p>
+                        ))}
+                      </>
+                    )}
                     <p>Minimum order quantity: {supplierRecommendation.minimum_order_quantity}</p>
                     <p>Pack size: {supplierRecommendation.pack_size}</p>
                     <p>Preferred supplier: {supplierRecommendation.is_preferred_supplier ? 'Yes' : 'No'}</p>
@@ -803,7 +914,7 @@ function App() {
                         </div>
                         <div className="probability-result">
                           <span>Order total</span>
-                          <strong>{po.currency} {po.total_amount}</strong>
+                          <strong>{formatCurrency(po.total_amount, po.currency)}</strong>
                         </div>
                         <p>Order lines: {po.lines?.length ?? 0}</p>
                         {po.lines?.map((line) => (

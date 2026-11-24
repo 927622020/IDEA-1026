@@ -30,3 +30,20 @@ def read_daily_demand(
         start_date=start_date,
         end_date=end_date,
     )
+
+
+@router.get("/forecast")
+def read_demand_forecast(
+    location_id: UUID,
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    tenant_id: UUID = Depends(get_current_tenant_id),
+):
+    from app.services.forecast_service import forecast_daily_demand
+
+    return forecast_daily_demand(
+        db,
+        tenant_id,
+        location_id=location_id,
+        product_id=product_id,
+    )

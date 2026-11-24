@@ -310,6 +310,27 @@ Features include:
 
 Daily inventory snapshots are captured by a scheduled job and used as inputs for stockout dataset construction.
 
+### Automatic Demand Forecasting
+
+The forecast service uses completed daily sales history for the selected
+location and product. It respects the location's configured timezone.
+
+Current demonstration behavior:
+
+- Uses the previous 28 completed local calendar days.
+- Generates forecasts for the next seven days.
+- Uses weekday averages when sufficient weekday history is available.
+- Falls back to an overall daily average when weekday history is limited.
+- Reports insufficient history when no usable sales history exists.
+
+API endpoint:
+
+`GET /api/v1/demand/forecast`
+
+**Forecast limitation:** This is a simple historical weekday-average baseline.
+It is separate from the LightGBM stockout-risk classifier and is not a
+production-validated demand forecasting model.
+
 ## 12. Stockout Prediction
 
 The ML pipeline uses LightGBM.
@@ -372,6 +393,26 @@ Supplier-aware recommendations additionally consider:
 
 The recommendation endpoint does not itself create a purchase order or change inventory.
 
+### Forecast-Based Supplier Recommendation
+
+The automatic recommendation endpoint combines the demand forecast with
+supplier lead time:
+
+`POST /api/v1/replenishment/forecast-supplier-recommendation`
+
+It:
+
+- Generates the demand forecast from historical sales.
+- Selects an eligible supplier using the existing supplier selection rules.
+- Sums forecast demand across that supplier's lead-time days.
+- Calculates the required replenishment quantity.
+- Applies safety stock, available inventory, and confirmed inbound stock.
+- Rounds the recommended quantity according to supplier MOQ and pack size.
+- Returns daily lead-time forecasts and estimated purchase cost.
+
+The recommendation is returned to the frontend. It does not automatically
+create or submit a purchase order.
+
 ## 14. Purchase Orders and Mock ERP
 
 The purchase order lifecycle is:
@@ -402,6 +443,26 @@ The mock ERP implements the ERP adapter interface and uses deterministic externa
 
 **Important ERP limitation:** The mock ERP stores documents in memory. Its records are not durable across restarts. A production integration needs a real ERP connector, persistent outbox, durable idempotency, retry handling, and reconciliation.
 
+### Frontend Workflow
+
+The React, TypeScript, and Vite dashboard provides the following user journey:
+
+1. View products and inventory balances.
+2. Run stockout-risk prediction.
+3. Generate an automatic demand forecast.
+4. Generate a forecast-based supplier recommendation.
+5. Create a draft purchase order.
+6. Approve the purchase order.
+7. Submit the order to the Mock ERP.
+8. Record goods receipt and refresh inventory.
+
+The same purchase order workflow supports the supplier recommendation
+result, including the forecast-based recommendation.
+
+The Tamil Nadu hackathon demonstration uses Chennai Demo Warehouse,
+Chennai Beverage Distributors, and illustrative INR supplier pricing.
+The demonstration sales history is synthetic.
+
 ## 15. Testing and Code Quality
 
 Run all tests:
@@ -428,7 +489,7 @@ Check migrations:
 alembic check
 ```
 
-The project has previously passed 81 automated tests. Run the commands above against your current checkout to verify its status.
+Latest verification for this development checkout: 83 automated tests passed. Ruff checks passed for `app` and `tests`, and the React frontend production build completed successfully. Five non-blocking Starlette deprecation warnings were reported during testing.
 
 ## 16. Development and Production Considerations
 
@@ -459,7 +520,7 @@ Before production use:
 | 5. Stockout prediction demo | Implemented; synthetic training data |
 | 6. Reorder recommendation engine | Core implementation complete |
 | 7. Mock ERP and automated PO ingestion | Core implementation complete |
-| 8. Integration, testing, documentation and demo | In progress |
+| 8. Integration, testing, documentation and demo | Frontend integration and PO workflow tested; 83 backend tests and frontend production build passed; final documentation and demo review in progress |
 
 ---
 

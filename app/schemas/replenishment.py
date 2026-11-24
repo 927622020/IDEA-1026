@@ -1,10 +1,14 @@
 
 """Schemas for database-driven supplier replenishment recommendations."""
 
+from datetime import date
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.forecast import DailyForecast
 
 
 class SupplierReplenishmentRequest(BaseModel):
@@ -50,3 +54,17 @@ class SupplierReplenishmentResponse(BaseModel):
     minimum_order_quantity: Decimal
     pack_size: Decimal
     is_preferred_supplier: bool
+
+
+
+class ForecastSupplierReplenishmentResponse(SupplierReplenishmentResponse):
+    """Supplier recommendation with the forecast window used."""
+
+    forecast_method: Literal[
+        "weekday_average",
+        "overall_daily_average",
+    ]
+    forecast_start_date: date
+    forecast_end_date: date
+    lead_time_forecast_days: int
+    lead_time_daily_forecasts: list[DailyForecast]
